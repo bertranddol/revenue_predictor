@@ -1,0 +1,122 @@
+---
+title: "Price per Mile / Revenue Correlation"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(plotly)
+library(hexbin)
+```
+
+### 1 - Seek correlation between monthly lagged price per mile and number of Traveling Passengers
+
+```{r ppm_cor, include=TRUE, echo=FALSE}
+basepath<-"/Users/bertrand/snowflake/airfare_prediction"
+
+dfa <- try(read.csv( paste0(basepath,"/data/B6_finance_ppm.csv") , header=TRUE, sep = "," ,stringsAsFactors=FALSE) )
+
+dfa$Revenue.passengers <- as.numeric(as.character(dfa$Revenue.passengers))
+dfa$Average.stage.length..miles. <- as.numeric(as.character(dfa$Average.stage.length..miles.))
+
+pairs(dfa[,c(4,5,8,9,10,11,13,15,16,17,18,19,20)], pch = 19)
+
+```
+
+#### Conclusion:
+Price purpase on 4, 6, 15, 21 and 30 days prior de departure have the best correlation with number of passengers.
+
+Next, checking those variables for wide enough spread to be significant and avoid overfitting.
+
+### 2 - Box charts price per mile variation per departure lag 
+```{r withplotly, echo=FALSE}
+
+plot_ly(dfa, x = ~Day_0, name='Day 0' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_1, name='Day 1' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_2, name='Day 2' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_3, name='Day 3' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_4, name='Day 4' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_5, name='Day 5' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_6, name='Day 6' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_7, name='Day 7' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_15, name='Day 15' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_21, name='Day 21' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_30, name='Day 30' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_60, name='Day 60' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_90, name='Day 90' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_180, name='Day 180' ,type = "box") %>%
+  layout(title = "ppm ( price per mile ) in US Dollar")
+
+```
+
+#### Conclusion:
+Keep Day 4, 15, 21 and 30 but prefer Day 6 over Day 7 for its variablility
+
+
+### 3 - Building number of passengers predictive model based on ppm for prior booking on Day 4, 5, 7, 21 and 30
+```{r monthly_predict, echo=FALSE}
+fit <- lm(Revenue.passengers ~ Day_4+Day_6+Day_15+Day_21+Day_30 , data = dfa )
+summary(fit)
+pre <- predict( fit, dfa) 
+dfa$pre <- pre
+acu <- data.frame(cbind(actuals=dfa$Revenue.passengers, predicteds=pre))
+
+#acu
+plot(acu)
+coef(fit)
+
+bin<-hexbin(dfa$Revenue.passengers, pre, xbins=4) 
+plot(bin, main="Hexagonal Binning")
+
+```
+
+#### Conclusion:
+Model plotted above has a very significant predictive model. Next step predicting Quarterly Revenue.
+Note: It is possible that this airline has a very predictive seasonal traffic that would explain such a blattant correlation.
+
+## 4 - Predicting Quarterly Revenue from price per mile variation
+
+```{r quarterly, echo=TRUE}
+dfa <- try(read.csv( paste0(basepath,"/data/B6_quarterly_finance_ppm.csv") , header=TRUE, sep = "," ,stringsAsFactors=FALSE) )
+
+dfa$Revenue <- as.numeric(as.character(dfa$Revenue))
+dfa$Quarter_ending <- as.Date(dfa$Quarter_ending, "%m/%d/%y")
+#pairs(dfa[,c(2,4,5,8,9,10,11,13,15,16,17)], pch = 19)
+
+fit <- lm(Revenue ~ Day_4+Day_7+Day_15+Day_30+Day_21, data = dfa )
+summary(fit)
+pre <- predict( fit, dfa) 
+dfa$pre <- pre
+acu <- data.frame(cbind(actuals=dfa$Revenue, predicteds=pre))
+
+acu
+plot(acu)
+coef(fit)
+
+bin<-hexbin(dfa$Revenue, pre, xbins=3) 
+plot(bin, main="Hexagonal Binning")
+
+```
+
+#### Conclusion: 
+  >>> PRETTY GOOD, NO?
+
+### 5 - Visual confirmation chart
+Chart below is representing normalized (around their means) the fields: revenue, prediction, day 0 to 180 
+```{r verif, echo=FALSE}
+plot_ly(dfa , x = ~Quarter_ending, y=~Revenue/mean(dfa$Revenue)*100, type = "scatter", name = 'Revenue', mode='lines') %>%
+  add_trace(y = ~pre/mean(dfa$pre)*100, name = 'Prediction', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_0/mean(dfa$Day_0)*100, name = 'Day_0', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_5/mean(dfa$Day_5)*100, name = 'Day_5', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_7/mean(dfa$Day_7)*100, name = 'Day_7', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_15/mean(dfa$Day_15)*100, name = 'Day_15', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_21/mean(dfa$Day_21)*100, name = 'Day_21', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_30/mean(dfa$Day_30)*100, name = 'Day_30', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_180/mean(dfa$Day_180)*100, name = 'Day_180', mode = 'lines+markers')
+
+
+```
+
+
+Note: Time serie is per quarter... January 2018 is in fact 2017 Q4 ...
