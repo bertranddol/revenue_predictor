@@ -1,0 +1,96 @@
+---
+title: "Price per Mile / Revenue Correlation"
+output:
+  html_document: default
+---
+
+### Bertrand Dolimier - Coursera Class - February 18th 2018
+## ##
+#### Airline ticket seems to constantly adjust the price of their fare. It is working? It is optimizing their revenue? It is a winning strategy and a necessary reaction to market fluctuation.
+## ##
+#### I am attempting to determine if there is a reasonable correlation between the observed price fluctuation for an airline company and its financial results.
+## ##
+#### Approach: 
+I collected daily price (agree missed some varation but resources are limited) for each direct flight departing on a specific month for one specific airline. (ie for JFK-LAX departing on Feb. x 2018 we collected price 180, 90, 60, 30, 21, 15, 7, 6, 5, 4, 3, 2, 1, 0 day prior to departure)
+
+### 1 - Normalizing
+For all the different flights, we calculated the price per mile as to allow aggregation of multiple routes.
+We then averaged prices per day prior to departure day. We shall see than price charge per miles varies between $0.15 and $0.70 and variation is extremely dependent on the lag between price observed date and departure date. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(plotly)
+library(hexbin)
+```
+
+### 2 - Box charts price per mile variation per departure lag 
+```{r withplotly, echo=FALSE}
+basepath<-"/Users/bertrand/snowflake/airfare_prediction"
+
+dfa <- try(read.csv( paste0(basepath,"/data/B6_finance_ppm.csv") , header=TRUE, sep = "," ,stringsAsFactors=FALSE) )
+
+dfa$Revenue.passengers <- as.numeric(as.character(dfa$Revenue.passengers))
+dfa$Average.stage.length..miles. <- as.numeric(as.character(dfa$Average.stage.length..miles.))
+
+plot_ly(dfa, x = ~Day_0, name='Day 0' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_1, name='Day 1' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_2, name='Day 2' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_3, name='Day 3' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_4, name='Day 4' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_5, name='Day 5' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_6, name='Day 6' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_7, name='Day 7' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_15, name='Day 15' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_21, name='Day 21' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_30, name='Day 30' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_60, name='Day 60' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_90, name='Day 90' ,type = "box") %>%
+  add_trace(dfa, x = ~Day_180, name='Day 180' ,type = "box") %>%
+  layout(title = "ppm ( price per mile ) in US Dollar")
+
+dfa <- try(read.csv( paste0(basepath,"/data/B6_quarterly_finance_ppm.csv") , header=TRUE, sep = "," ,stringsAsFactors=FALSE) )
+
+```
+#### Conclusion:
+We are now adding Quaterly revenue for this public airline and use below Day 4, 6, 15, 21 and 30 as linear regression input for a predictive model.
+
+
+## 3 - Predicting Quarterly Revenue from price per mile variation
+```{r quarterly, echo=TRUE}
+
+dfa$Revenue <- as.numeric(as.character(dfa$Revenue))
+dfa$Quarter_ending <- as.Date(dfa$Quarter_ending, "%m/%d/%y")
+
+fit <- lm(Revenue ~ Day_4+Day_7+Day_15+Day_30+Day_21, data = dfa )
+summary(fit)
+coef(fit)
+
+pre <- predict( fit, dfa) 
+dfa$pre <- pre
+
+bin<-hexbin(dfa$Revenue, pre, xbins=3) 
+plot(bin, main="Hexagonal Binning")
+plot_ly(data = dfa, x = dfa$Revenue, y = dfa$pre)
+
+```
+
+#### Conclusion: 
+> No matter which plot_ly graph we select, the high correlation is easily observable...
+
+### 4 - Visual confirmation chart
+Chart below is representing normalized (around their means) the fields: revenue, prediction and day 0 to 180 
+```{r verif, echo=FALSE}
+plot_ly(dfa , x = ~Quarter_ending, y=~Revenue/mean(dfa$Revenue)*100, type = "scatter", name = 'Revenue', mode='lines') %>%
+  add_trace(y = ~pre/mean(dfa$pre)*100, name = 'Prediction', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_0/mean(dfa$Day_0)*100, name = 'Day_0', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_5/mean(dfa$Day_5)*100, name = 'Day_5', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_7/mean(dfa$Day_7)*100, name = 'Day_7', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_15/mean(dfa$Day_15)*100, name = 'Day_15', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_21/mean(dfa$Day_21)*100, name = 'Day_21', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_30/mean(dfa$Day_30)*100, name = 'Day_30', mode = 'lines+markers') %>%
+  add_trace(y = ~Day_180/mean(dfa$Day_180)*100, name = 'Day_180', mode = 'lines+markers')
+
+```
+
+#### Conclusion: 
+Again easy to see how revenue and prediction lines are correlated.

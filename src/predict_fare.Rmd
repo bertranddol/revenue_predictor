@@ -1,0 +1,121 @@
+---
+title: "Untitled"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rJava)
+library(plyr) ; # used for sorting
+library(corrplot) ; # Correlation plot
+library(RJDBC)
+library(ggplot2)
+library(neuralnet)
+
+
+basepath<-"/Users/bertrand/snowflake/airfare_prediction"
+
+```
+
+## R Markdown
+
+
+```{r getdata}
+set.seed(333)
+# Training data
+  adf <- try(read.csv( paste0(basepath,"/data/jfksfo_t.csv") , header=TRUE, sep = "," ,stringsAsFactors=FALSE) )
+adf$wday <- adf$QL2_DDATE - 5537
+adf$lagday <- adf$QL2_DDATE - adf$QL2_QTS 
+
+bdf <-aggregate( adf$FARE , by=list( adf$MARKET , adf$CXR , adf$DFLIGHT , adf$wday , adf$lagday ), FUN=max , na.rm=TRUE) 
+colnames(bdf)[1] <- 'market'
+colnames(bdf)[2] <- 'CXR'
+colnames(bdf)[3] <- 'flight'
+colnames(bdf)[4] <- 'weekday'
+colnames(bdf)[5] <- 'lagday'
+colnames(bdf)[6] <- 'fare'
+bdf$direction      <- 0
+bdf$allpriorfare   <- 0  
+bdf$prior3fare     <- 0
+bdf$allcompfare  <- 0
+bdf$prior3compfare <- 0
+bdf$yesterdayfare <- 0
+
+
+for ( ii in 1:nrow(bdf) ) {
+  tdf <- bdf[(bdf$CXR==bdf$CXR[ii] & bdf$flight==bdf$flight[ii] & bdf$weekday==bdf$weekday[ii]) , ]
+  # Average for all the lag days for the unique flight 
+  bdf$allpriorfare[ii] <- mean(tdf$fare)
+
+  # Average on last 3 days
+  tdf <- bdf[(bdf$CXR==bdf$CXR[ii] & bdf$flight==bdf$flight[ii] & bdf$weekday==bdf$weekday[ii] & bdf$lagday==bdf$lagday[ii]+1 | bdf$lagday==bdf$lagday[ii]+2 | bdf$lagday==bdf$lagday[ii]+3 ) , ]
+  bdf$prior3fare[ii] <- mean(tdf$fare)
+  
+  # Competitor Average for all the lag days for the unique flight 
+  tdf <- bdf[(bdf$CXR!=bdf$CXR[ii] & bdf$lagday==bdf$lagday[ii]) , ]
+  bdf$allcompfare[ii] <- mean(tdf$fare)
+  
+  # All competitor prior 3 fare
+  tdf <- bdf[(bdf$CXR!=bdf$CXR[ii] & ( bdf$lagday==bdf$lagday[ii]+1 | bdf$lagday==bdf$lagday[ii]+2 | bdf$lagday==bdf$lagday[ii]+3 ) ) , ]
+  bdf$prior3compfare[ii] <- mean(tdf$fare)
+    
+  # Yesterday fare
+  tdf <- bdf[(bdf$CXR==bdf$CXR[ii] & bdf$flight==bdf$flight[ii] & bdf$weekday==bdf$weekday[ii] & bdf$lagday==bdf$lagday[ii]+1 ) , ]
+  if ( nrow(tdf) > 0 ) {
+    bdf$yesterdayfare[ii] <- mean(tdf$fare)
+    if ( bdf$fare[ii] > bdf$yesterdayfare[ii] ) {
+      print ( c( ii , "Went down") )
+      bdf$direction[ii] <-  0
+      #bdf$direction[ii] <- 1
+    } else if ( bdf$fare[ii] < bdf$yesterdayfare[ii] ) {
+      print ( c( ii , "Went UP") )
+      bdf$direction[ii] <- 1
+    } else {
+      print ( c( ii , "No changes ") )
+      bdf$direction[ii] <- 0.5
+    }
+  }
+}
+
+
+str(bdf)
+hist(bdf$direction)
+
+# Normalize 
+bdf[is.na(bdf)] <- 0
+
+bdf$fare <- ( bdf$fare - min( bdf$fare ) ) / ( max(bdf$fare) - min( bdf$fare ) )
+
+bdf$prior3fare <- ( bdf$prior3fare - min( bdf$prior3fare[!is.na(bdf$prior3fare)] ) ) / ( max(bdf$prior3fare[!is.na(bdf$prior3fare)]) - min( bdf$prior3fare[!is.na(bdf$prior3fare)] ) )
+
+
+bdf$allcompfare <- ( bdf$allcompfare - min( bdf$allcompfare[!is.na(bdf$allcompfare)] ) ) / ( max(bdf$allcompfare[!is.na(bdf$allcompfare)]) - min( bdf$allcompfare[!is.na(bdf$allcompfare)] ) )
+
+bdf$allpriorfare <- ( bdf$allpriorfare - min( bdf$allpriorfare[!is.na(bdf$allpriorfare)] ) ) / ( max(bdf$allpriorfare[!is.na(bdf$allpriorfare)]) - min( bdf$allpriorfare[!is.na(bdf$allpriorfare)] ) )
+
+bdf$prior3compfare <- ( bdf$prior3compfare - min( bdf$prior3compfare[!is.na(bdf$prior3compfare)]  ) ) / ( max(bdf$prior3compfare[!is.na(bdf$prior3compfare)] ) - min( bdf$prior3compfare[!is.na(bdf$prior3compfare)]  ) )
+
+bdf$yesterdayfare <- ( bdf$yesterdayfare - min( bdf$yesterdayfare[!is.na(bdf$yesterdayfare)]) ) / ( max(bdf$yesterdayfare[!is.na(bdf$yesterdayfare)]) - min( bdf$yesterdayfare[!is.na(bdf$yesterdayfare)] ) )
+
+bdf[is.na(bdf)] <- 0
+
+#bcd n <- neuralnet( direction~fare+yesterdayfare+allpriorfare+allcompfare+prior3compfare , data = bdf , hidden = c(3) , err.fct = 'sse' , linear.output= FALSE , stepmax = 1e6 , threshold=.1 )
+
+#plot(n)
+
+#saveRDS( n , file=paste0(basepath,"/data/model_n.rds") )
+#n<-readRDS( file= paste0(basepath,"/data/model_n.rds") )
+
+outp <- compute( n , bdf[,c("fare","yesterdayfare","allpriorfare","allcompfare","prior3compfare")] )
+p2<-outp$net.result
+
+p3 <- p2[order(p2[,1]),]
+
+pred2 <- ifelse(p2>0.08568865,1,ifelse(p2<0.005084857,0,0.5) )
+#pred2 <- ifelse(p2>0.05,1,0 )
+tab <- table( pred2 , bdf$direction )
+tab
+1-sum( diag( tab )) / sum(tab)
+
+```
+
